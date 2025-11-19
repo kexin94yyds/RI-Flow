@@ -16,7 +16,7 @@ document.addEventListener('DOMContentLoaded', () => {
   let peerId;
 
   async function initPeer() {
-    const { Peer } = require('peerjs');
+    // const { Peer } = require('peerjs'); // Don't use require, use global from CDN
     peer = new Peer(); // Auto-generate ID
 
     peer.on('open', (id) => {
@@ -119,9 +119,13 @@ document.addEventListener('DOMContentLoaded', () => {
   document.querySelector('.actions').appendChild(mobileConnectBtn);
 
   mobileConnectBtn.addEventListener('click', async () => {
+    if (!peerId) {
+      alert('正在初始化远程连接服务，请稍后再试...');
+      return;
+    }
     // const { url, qrCode } = await ipcRenderer.invoke('get-mobile-connect-info');
     // Use Netlify URL + Peer ID
-    const baseUrl = 'https://info-filter-dashboard.netlify.app'; // 假设的 Netlify URL，用户需要自己替换
+    const baseUrl = 'https://info-flow.netlify.app'; // Updated based on user's project name
     const url = `${baseUrl}/web-dashboard.html?peer=${peerId}`;
     const QRCode = require('qrcode');
     const qrCode = await QRCode.toDataURL(url);

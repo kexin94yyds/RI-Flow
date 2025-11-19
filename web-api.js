@@ -245,7 +245,7 @@ const peerAPI = {
       window.webAPI = peerAPI;
       peerAPI.init(peerId).catch(err => {
         console.error('Peer init failed:', err);
-        alert('连接失败，请检查 ID 是否正确');
+        alert(`连接失败: ${err.type || err.message || err}\n请检查桌面端是否在线，或尝试刷新页面。`);
       });
     } else {
       // 默认本地模式
