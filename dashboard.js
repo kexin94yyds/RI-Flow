@@ -270,7 +270,7 @@ document.addEventListener('DOMContentLoaded', () => {
     grid.innerHTML = '';
 
     if (items.length === 0) {
-      grid.innerHTML = '<div class="empty-state">暂无内容，按 <kbd>Cmd+Shift+O</kbd> 添加</div>';
+      grid.innerHTML = '<div class="empty-state">暂无内容，按 <kbd>Cmd+Shift+I</kbd> 添加</div>';
       return;
     }
 
@@ -286,7 +286,7 @@ document.addEventListener('DOMContentLoaded', () => {
             <path d="M5 17h14v-1.76a2 2 0 0 0-1.11-1.79l-1.78-.9A2 2 0 0 1 15 10.76V6h1a2 2 0 0 0 0-4H8a2 2 0 0 0 0 4h1v4.76a2 2 0 0 1-1.11 1.79l-1.78.9A2 2 0 0 0 5 15.24Z"></path>
           </svg>
         </div>
-        ${item.image ? `<div style="height: 140px; background-image: url('${item.image}'); background-size: cover; background-position: center;"></div>` : ''}
+        ${item.image ? `<div style="height: 140px; background-image: url('${item.image}'); background-size: contain; background-repeat: no-repeat; background-position: center; background-color: #f3f4f6;"></div>` : ''}
         <div class="card-content">
           <div class="card-meta">
             <span class="platform-tag platform-${item.platform}">${item.platform}</span>

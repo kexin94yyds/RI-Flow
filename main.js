@@ -257,7 +257,7 @@ app.whenReady().then(() => {
   startLocalServer();
 
   // 注册全局快捷键
-  globalShortcut.register('CommandOrControl+Shift+O', async () => {
+  globalShortcut.register('CommandOrControl+Shift+I', async () => {
     if (captureWindow) {
       if (captureWindow.isVisible()) {
         captureWindow.hide();
