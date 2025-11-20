@@ -120,6 +120,11 @@
       display: flex;
       flex-direction: column;
       position: relative;
+      cursor: grab;
+    }
+
+    .card:active {
+      cursor: grabbing;
     }
 
     .card.pinned {
@@ -228,6 +233,15 @@
       padding: 6px 12px;
       border-radius: 4px;
       -webkit-tap-highlight-color: transparent;
+    }
+
+    .sortable-ghost {
+      opacity: 0.4;
+    }
+
+    .sortable-drag {
+      opacity: 0.85;
+      box-shadow: 0 20px 25px -5px rgba(0, 0, 0, 0.1);
     }
 
     .empty-state {
@@ -349,7 +363,12 @@
         <button class="filter-btn" data-filter="YouTube">YouTube</button>
         <button class="filter-btn" data-filter="Web">网页</button>
       </div>
-      <button id="showAddModalBtn" class="add-btn">+ 添加</button>
+      <div class="actions" style="display: flex; gap: 8px; flex-wrap: wrap;">
+        <button class="add-btn" id="exportBtn" style="background: #4b5563;">导出</button>
+        <button class="add-btn" id="importBtn" style="background: #4b5563;">导入</button>
+        <input type="file" id="importFile" style="display: none" accept=".json">
+        <button id="showAddModalBtn" class="add-btn">+ 添加</button>
+      </div>
     </header>
 
     <div id="grid" class="grid"></div>
@@ -395,6 +414,7 @@
   </div>
 
   <script src="https://unpkg.com/peerjs@1.5.4/dist/peerjs.min.js"></script>
+  <script src="https://cdn.jsdelivr.net/npm/sortablejs@1.15.6/Sortable.min.js"></script>
   <script src="web-api.js"></script>
   <script src="web-dashboard.js"></script>
 </body>
