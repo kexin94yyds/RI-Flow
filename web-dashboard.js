@@ -487,15 +487,49 @@ document.addEventListener('DOMContentLoaded', () => {
     if (window.webAPI && window.webAPI.getItems) {
       try {
         const items = await window.webAPI.getItems();
-        if (items && Array.isArray(items)) {
+        if (items && Array.isArray(items) && items.length > 0) {
           allItems = items;
           renderGrid(getFilteredItems(items));
+        } else {
+          // 如果没有数据，显示导入提示
+          showImportHint();
         }
       } catch (e) {
         console.error('Failed to load items:', e);
+        showImportHint();
       }
+    } else {
+      showImportHint();
     }
   }, 100);
+  
+  // 显示导入提示
+  function showImportHint() {
+    // 检查是否已经显示过提示
+    if (localStorage.getItem('import-hint-shown')) return;
+    
+    const hintDiv = document.createElement('div');
+    hintDiv.style.cssText = 'position: fixed; top: 20px; left: 50%; transform: translateX(-50%); background: #10b981; color: white; padding: 12px 20px; border-radius: 8px; box-shadow: 0 4px 12px rgba(0,0,0,0.15); z-index: 1000; display: flex; align-items: center; gap: 12px; max-width: 90%;';
+    hintDiv.innerHTML = `
+      <span>💡 点击"📥 导入桌面数据"按钮，从桌面端导入数据</span>
+      <button id="closeHintBtn" style="background: rgba(255,255,255,0.2); border: none; color: white; padding: 4px 8px; border-radius: 4px; cursor: pointer;">✕</button>
+    `;
+    document.body.appendChild(hintDiv);
+    
+    const closeBtn = hintDiv.querySelector('#closeHintBtn');
+    closeBtn.addEventListener('click', () => {
+      hintDiv.remove();
+      localStorage.setItem('import-hint-shown', 'true');
+    });
+    
+    // 5秒后自动消失
+    setTimeout(() => {
+      if (hintDiv.parentNode) {
+        hintDiv.remove();
+        localStorage.setItem('import-hint-shown', 'true');
+      }
+    }, 5000);
+  }
 
   // 检查网络连接状态（仅在非 Electron 环境下）
   if (!window.electron) {
