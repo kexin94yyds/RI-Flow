@@ -2,14 +2,8 @@
   # 发布目录（静态文件根目录）
   publish = "."
   
-  # 构建命令（如果需要）
-  # command = "npm run build"
-  
-# 重定向规则（如果需要）
-[[redirects]]
-  from = "/*"
-  to = "/index.html"
-  status = 200
+  # 不需要构建命令，直接部署静态文件
+  # command = ""
 
 # 头部设置
 [[headers]]
@@ -19,4 +13,5 @@
     X-XSS-Protection = "1; mode=block"
     X-Content-Type-Options = "nosniff"
     Referrer-Policy = "strict-origin-when-cross-origin"
+    Cache-Control = "public, max-age=3600"
 
