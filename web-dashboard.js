@@ -3,6 +3,7 @@ document.addEventListener('DOMContentLoaded', () => {
   const grid = document.getElementById('grid');
   const filters = document.getElementById('filters');
   const showAddModalBtn = document.getElementById('showAddModalBtn');
+  const importDesktopBtn = document.getElementById('importDesktopBtn');
   const exportBtn = document.getElementById('exportBtn');
   const importBtn = document.getElementById('importBtn');
   const importFile = document.getElementById('importFile');
@@ -169,6 +170,72 @@ document.addEventListener('DOMContentLoaded', () => {
       renderGrid(getFilteredItems(allItems));
     }
   });
+
+  // 导入桌面端数据
+  const importDesktopModal = document.getElementById('importDesktopModal');
+  const desktopIpInput = document.getElementById('desktopIpInput');
+  const cancelImportBtn = document.getElementById('cancelImportBtn');
+  const confirmImportBtn = document.getElementById('confirmImportBtn');
+  
+  if (importDesktopBtn) {
+    importDesktopBtn.addEventListener('click', () => {
+      if (importDesktopModal) {
+        importDesktopModal.style.display = 'flex';
+        desktopIpInput.value = '';
+        desktopIpInput.focus();
+      }
+    });
+  }
+  
+  if (cancelImportBtn) {
+    cancelImportBtn.addEventListener('click', () => {
+      if (importDesktopModal) {
+        importDesktopModal.style.display = 'none';
+      }
+    });
+  }
+  
+  if (confirmImportBtn) {
+    confirmImportBtn.addEventListener('click', async () => {
+      if (!window.webAPI || !window.webAPI.tryImportFromDesktop) {
+        alert('此功能需要桌面端应用运行在本地服务器（端口 3000）\n\n请确保：\n1. 桌面端应用正在运行\n2. 手机和电脑在同一 WiFi 网络');
+        return;
+      }
+      
+      const customIp = desktopIpInput.value.trim();
+      confirmImportBtn.disabled = true;
+      confirmImportBtn.textContent = '正在导入...';
+      
+      try {
+        const result = await window.webAPI.tryImportFromDesktop(customIp || null);
+        if (result.success) {
+          alert(`✅ 成功导入 ${result.count} 条数据！`);
+          // 重新加载数据
+          await loadItems();
+          if (importDesktopModal) {
+            importDesktopModal.style.display = 'none';
+          }
+        } else {
+          alert('❌ 无法连接到桌面端\n\n请确保：\n1. 桌面端应用正在运行\n2. 手机和电脑在同一 WiFi 网络\n3. 输入正确的电脑 IP 地址\n\n如何获取电脑 IP：\n- Mac: 系统设置 → 网络\n- Windows: ipconfig');
+        }
+      } catch (e) {
+        console.error('Import error:', e);
+        alert('导入失败：' + e.message);
+      } finally {
+        confirmImportBtn.disabled = false;
+        confirmImportBtn.textContent = '开始导入';
+      }
+    });
+  }
+  
+  // 点击背景关闭弹窗
+  if (importDesktopModal) {
+    importDesktopModal.addEventListener('click', (e) => {
+      if (e.target === importDesktopModal) {
+        importDesktopModal.style.display = 'none';
+      }
+    });
+  }
 
   // 显示添加弹窗
   showAddModalBtn.addEventListener('click', async () => {

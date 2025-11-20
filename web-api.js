@@ -430,8 +430,96 @@ const hybridAPI = {
     } else {
       // 默认本地模式（完全独立）
       console.log('Running in Standalone Web Mode (Local Storage)');
+      
+      // 尝试从桌面端本地服务器导入数据
+      const localServerAPI = {
+        // 尝试从本地服务器获取数据（支持自定义 IP）
+        tryImportFromDesktop: async (customIp = null) => {
+          // 构建可能的 URL 列表
+          const possibleUrls = [];
+          
+          if (customIp) {
+            // 如果提供了自定义 IP，优先使用
+            possibleUrls.push(`http://${customIp}:3000/api/items`);
+          } else {
+            // 默认尝试本地地址
+            possibleUrls.push('http://localhost:3000/api/items');
+            possibleUrls.push('http://127.0.0.1:3000/api/items');
+            
+            // 尝试常见的局域网地址段（仅在前端，不实际扫描）
+            // 注意：实际使用时需要用户输入 IP
+          }
+          
+          for (const url of possibleUrls) {
+            try {
+              const response = await fetch(url, {
+                method: 'GET',
+                headers: { 'Content-Type': 'application/json' },
+                // 设置超时
+                signal: AbortSignal.timeout(3000)
+              });
+              
+              if (response.ok) {
+                const desktopItems = await response.json();
+                if (desktopItems && Array.isArray(desktopItems) && desktopItems.length > 0) {
+                  console.log('Found desktop data, importing...', desktopItems.length, 'items');
+                  
+                  // 合并到本地存储
+                  const localItems = await webStorage.get('items') || [];
+                  const itemMap = new Map();
+                  
+                  // 先添加本地数据
+                  localItems.forEach(item => itemMap.set(item.id, item));
+                  // 再添加桌面端数据（桌面端数据优先）
+                  desktopItems.forEach(item => itemMap.set(item.id, item));
+                  
+                  const mergedItems = Array.from(itemMap.values()).sort((a, b) => {
+                    if (a.pinned !== b.pinned) return a.pinned ? -1 : 1;
+                    return new Date(b.createdAt) - new Date(a.createdAt);
+                  });
+                  
+                  await webStorage.set('items', mergedItems);
+                  console.log('Desktop data imported successfully:', mergedItems.length, 'items');
+                  
+                  return { success: true, items: mergedItems, count: desktopItems.length };
+                }
+              }
+            } catch (e) {
+              // 忽略错误，继续尝试下一个地址
+              console.log('Tried', url, 'but desktop server not available:', e.message);
+            }
+          }
+          
+          return { success: false, message: 'Desktop server not found. Please ensure desktop app is running and enter the correct IP address.' };
+        }
+      };
+      
+      // 自动尝试导入（延迟执行，不阻塞页面加载）
+      // 注意：如果网页运行在 HTTPS，无法访问 HTTP 的本地服务器（混合内容限制）
+      // 用户需要直接访问 http://localhost:3000/web-dashboard.html 才能导入
+      setTimeout(async () => {
+        // 只有在 HTTP 环境下才尝试自动导入
+        if (window.location.protocol === 'http:' || window.location.hostname === 'localhost' || window.location.hostname === '127.0.0.1') {
+          const result = await localServerAPI.tryImportFromDesktop();
+          if (result.success) {
+            console.log('Auto-imported', result.count, 'items from desktop');
+            // 触发更新
+            if (window.webAPI && window.webAPI.subscribe) {
+              // 通过 storage 事件触发更新
+              window.dispatchEvent(new StorageEvent('storage', {
+                key: 'items',
+                newValue: JSON.stringify(result.items)
+              }));
+            }
+          }
+        } else {
+          console.log('Running on HTTPS, auto-import disabled. Please visit http://localhost:3000/web-dashboard.html to import desktop data.');
+        }
+      }, 1000);
+      
       window.webAPI = {
         ...webAPI,
+        tryImportFromDesktop: localServerAPI.tryImportFromDesktop,
         subscribe: (callback) => {
           // 立即返回本地数据
           webStorage.get('items').then(items => {

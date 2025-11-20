@@ -363,7 +363,10 @@
         <button class="filter-btn" data-filter="YouTube">YouTube</button>
         <button class="filter-btn" data-filter="Web">网页</button>
       </div>
-      <button id="showAddModalBtn" class="add-btn">+ 添加</button>
+      <div style="display: flex; gap: 8px; flex-wrap: wrap;">
+        <button id="importDesktopBtn" class="add-btn" style="background: #10b981; font-size: 12px; padding: 8px 12px;">📥 导入桌面数据</button>
+        <button id="showAddModalBtn" class="add-btn">+ 添加</button>
+      </div>
     </header>
 
     <div id="status-bar"
@@ -408,6 +411,24 @@
       <div class="modal-actions">
         <button class="btn-cancel" id="cancelAddBtn">取消</button>
         <button class="btn-save" id="confirmAddBtn">保存</button>
+      </div>
+    </div>
+  </div>
+
+  <!-- 导入桌面数据弹窗 -->
+  <div id="importDesktopModal" style="display: none; position: fixed; top: 0; left: 0; right: 0; bottom: 0; background: rgba(0,0,0,0.5); z-index: 200; justify-content: center; align-items: center;">
+    <div class="modal-content" style="max-width: 400px;">
+      <div class="modal-title">导入桌面端数据</div>
+      <div class="form-group">
+        <label>电脑 IP 地址（可选，自动检测）</label>
+        <input type="text" id="desktopIpInput" placeholder="例如: 192.168.1.100" style="margin-bottom: 8px;">
+        <p style="font-size: 12px; color: #6b7280; margin: 0;">
+          提示：如果手机和电脑在同一 WiFi，可以自动检测。否则请输入电脑的 IP 地址。
+        </p>
+      </div>
+      <div class="modal-actions">
+        <button class="btn-cancel" id="cancelImportBtn">取消</button>
+        <button class="btn-save" id="confirmImportBtn">开始导入</button>
       </div>
     </div>
   </div>
