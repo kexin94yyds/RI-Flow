@@ -311,17 +311,22 @@
     }
 
     #imagePreview {
-      margin-bottom: 12px;
+      margin-top: 8px;
+      margin-bottom: 16px;
       display: none;
       border-radius: 8px;
       overflow: hidden;
+      position: relative;
+      background: #f3f4f6;
+      max-height: 220px;
+      min-height: 180px;
     }
 
     #imagePreview img {
       width: 100%;
-      height: 100%;
-      object-fit: contain;
-      background-color: #f3f4f6;
+      height: 200px;
+      object-fit: cover;
+      display: block;
     }
 
     .modal-actions {
