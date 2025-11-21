@@ -1,5 +1,5 @@
 // Netlify Function: Fetch page metadata (title, image)
-// Mirrors the logic used in the desktop Electron app.
+// 实现逻辑对齐桌面端 main.js 里的 ipcMain.handle('fetch-metadata')
 
 const fetch = require('node-fetch');
 const cheerio = require('cheerio');
@@ -12,8 +12,8 @@ exports.handler = async (event) => {
   }
 
   try {
-    const metadata = await fetchMetadata(url);
-    return jsonResponse(metadata);
+    const data = await fetchMetadata(url);
+    return jsonResponse(data);
   } catch (err) {
     console.error('Netlify fetch-metadata error:', err);
     return jsonResponse({ title: '', image: '' });
@@ -21,86 +21,43 @@ exports.handler = async (event) => {
 };
 
 async function fetchMetadata(url) {
-  // 尝试使用 Twitter 的公开嵌入接口（如果是推文链接）
-  if (isTwitterUrl(url)) {
-    const twitterMeta = await fetchTwitterMetadata(url).catch(() => null);
-    if (twitterMeta && (twitterMeta.title || twitterMeta.image)) {
-      return twitterMeta;
-    }
-
-    // 如果上面的 JSON 接口失败，再退回到 “桌面端同款” 的 HTML 抓取逻辑
-    return await fetchWithUserAgent(
-      url,
-      'facebookexternalhit/1.1 (+http://www.facebook.com/externalhit_uatext.php)'
-    );
+  if (!url.startsWith('http')) {
+    return { title: '', image: '' };
   }
 
-  // 普通网页：和桌面端一样，用桌面浏览器 UA 抓 og:title / og:image
-  return await fetchWithUserAgent(
-    url,
-    'Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/91.0.4472.114 Safari/537.36'
-  );
-}
+  // 与桌面端一样：Twitter/X 使用专门的 UA 以获得 OpenGraph 标签
+  if (url.includes('twitter.com') || url.includes('x.com')) {
+    const res = await fetch(url, {
+      headers: {
+        'User-Agent': 'facebookexternalhit/1.1 (+http://www.facebook.com/externalhit_uatext.php)'
+      },
+      timeout: 5000
+    });
+    const html = await res.text();
+    const $ = cheerio.load(html);
 
-function isTwitterUrl(url) {
-  return /twitter\.com|x\.com/i.test(url);
-}
-
-function parseTweetId(url) {
-  const match = url.match(/status\/(\d+)/);
-  return match ? match[1] : null;
-}
-
-async function fetchTwitterMetadata(url) {
-  const tweetId = parseTweetId(url);
-  if (!tweetId) return null;
-
-  const apiUrl = `https://cdn.syndication.twimg.com/tweet?id=${tweetId}`;
-
-  const res = await fetch(apiUrl, {
-    headers: {
-      'User-Agent': 'Mozilla/5.0',
-      'Accept': 'application/json,text/plain,*/*'
-    },
-    timeout: 8000
-  });
-
-  if (!res.ok) return null;
-
-  const data = await res.json();
-
-  const title =
-    (data.text || data.full_text || '')
-      .replace(/\s+/g, ' ')
-      .trim();
-
-  let image = '';
-  if (Array.isArray(data.photos) && data.photos.length > 0) {
-    image =
-      data.photos[0].url ||
-      data.photos[0].image_url ||
-      data.photos[0].media_url_https ||
+    const title =
+      $('meta[property="og:title"]').attr('content') ||
+      $('meta[name="twitter:title"]').attr('content') ||
+      $('title').text() ||
       '';
-  }
 
-  // 如果推文本身没有图片，就用头像兜底
-  if (!image && data.user) {
-    image =
-      data.user.profile_image_url_https ||
-      data.user.profile_image_url ||
+    const image =
+      $('meta[property="og:image"]').attr('content') ||
+      $('meta[name="twitter:image"]').attr('content') ||
       '';
+
+    return { title: title.trim(), image };
   }
 
-  if (!title && !image) return null;
-  return { title, image };
-}
-
-async function fetchWithUserAgent(url, userAgent) {
+  // 其他网站：和桌面端一样，用桌面浏览器 UA 抓取 og:title / og:image
   const res = await fetch(url, {
     headers: {
-      'User-Agent': userAgent
+      'User-Agent':
+        'Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 ' +
+        '(KHTML, like Gecko) Chrome/91.0.4472.114 Safari/537.36'
     },
-    timeout: 8000
+    timeout: 5000
   });
 
   const html = await res.text();
@@ -125,7 +82,6 @@ function jsonResponse(payload) {
     statusCode: 200,
     headers: {
       'Content-Type': 'application/json; charset=utf-8',
-      // Allow calling from any origin hosting this static bundle.
       'Access-Control-Allow-Origin': '*'
     },
     body: JSON.stringify(payload)

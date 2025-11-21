@@ -79,71 +79,38 @@ const webAPI = {
     if (!url) return { title: '', image: '' };
 
     // 统一补全协议，和桌面端行为保持一致
-    const normalizedUrl = url.startsWith('http') ? url : `https://${url}`;
+    const normalizedUrl = /^https?:\/\//i.test(url) ? url : `https://${url}`;
 
-    // 优先尝试同源/服务端 API，再回退到公共代理
-    // 这样在 Netlify 上可以使用无 CORS 限制的函数逻辑，
-    // 在本地 Express 环境下可以使用 /api/metadata，
-    // 其它场景则回退到 allorigins 代理。
-
-    // 1) Netlify Function（/.netlify/functions/fetch-metadata）
+    // 1) Netlify Function（部署在 info-flow.netlify.app 时）
     try {
       const fnRes = await fetch(`/.netlify/functions/fetch-metadata?url=${encodeURIComponent(normalizedUrl)}`);
       if (fnRes.ok) {
-        const text = await fnRes.text();
-        const data = JSON.parse(text);
-        if (data && (data.title || data.image)) {
-          return {
-            title: (data.title || '').trim(),
-            image: data.image || ''
-          };
-        }
+        const data = await fnRes.json();
+        return {
+          title: (data.title || '').trim(),
+          image: data.image || ''
+        };
       }
     } catch (e) {
-      console.warn('Netlify metadata function unavailable, fallback to other methods.', e);
+      console.warn('Netlify metadata function unavailable, fallback to local API if exists.', e);
     }
 
-    // 2) 本地/桌面端内置的 Express API（用于手机连接到电脑时）
+    // 2) 本地 / 桌面端内置的 Express API（用于手机连接到电脑时）
     try {
       const apiRes = await fetch(`/api/metadata?url=${encodeURIComponent(normalizedUrl)}`);
       if (apiRes.ok) {
-        const text = await apiRes.text();
-        const data = JSON.parse(text);
-        if (data && (data.title || data.image)) {
-          return {
-            title: (data.title || '').trim(),
-            image: data.image || ''
-          };
-        }
+        const data = await apiRes.json();
+        return {
+          title: (data.title || '').trim(),
+          image: data.image || ''
+        };
       }
     } catch (e) {
-      console.warn('Local /api/metadata unavailable, fallback to proxy.', e);
+      console.warn('Local /api/metadata unavailable.', e);
     }
 
-    // 3) 公共 CORS 代理（最后的兜底手段）
-    try {
-      const proxyUrl = `https://api.allorigins.win/get?url=${encodeURIComponent(normalizedUrl)}`;
-      const response = await fetch(proxyUrl);
-      if (!response.ok) throw new Error(`Proxy HTTP ${response.status}`);
-
-      const data = await response.json();
-      const html = data.contents;
-
-      const parser = new DOMParser();
-      const doc = parser.parseFromString(html, 'text/html');
-
-      const title = doc.querySelector('meta[property="og:title"]')?.content ||
-        doc.querySelector('meta[name="twitter:title"]')?.content ||
-        doc.querySelector('title')?.textContent || '';
-
-      const image = doc.querySelector('meta[property="og:image"]')?.content ||
-        doc.querySelector('meta[name="twitter:image"]')?.content || '';
-
-      return { title: title.trim(), image };
-    } catch (error) {
-      console.error('Fetch metadata error (proxy fallback):', error);
-      return { title: '', image: '' };
-    }
+    // 和桌面端一样：如果都失败，就返回空，让用户手动填
+    return { title: '', image: '' };
   }
 };
 
@@ -362,7 +329,7 @@ const hybridAPI = {
   fetchMetadata: async (url) => {
     if (!url) return { title: '', image: '' };
 
-    const normalizedUrl = url.startsWith('http') ? url : `https://${url}`;
+    const normalizedUrl = /^https?:\/\//i.test(url) ? url : `https://${url}`;
 
     // 如果已连接桌面端，优先让桌面端来抓取（与桌面应用完全一致）
     if (hybridAPI.conn && hybridAPI.conn.open) {
@@ -373,7 +340,7 @@ const hybridAPI = {
           delete hybridAPI.pendingMetadataRequests[requestId];
           // 超时则回退到 Web 自己的逻辑
           try {
-            const fallback = await webAPI.fetchMetadata(normalizedUrl);
+            const fallback = await webAPI.fetchMetadata(url);
             resolve(fallback);
           } catch (_) {
             resolve({ title: '', image: '' });
@@ -395,15 +362,15 @@ const hybridAPI = {
           clearTimeout(timeout);
           delete hybridAPI.pendingMetadataRequests[requestId];
           // 发送失败直接回退
-          webAPI.fetchMetadata(normalizedUrl)
+          webAPI.fetchMetadata(url)
             .then(resolve)
             .catch(() => resolve({ title: '', image: '' }));
         }
       });
     }
 
-    // 未连接桌面端时，退回到 Web 自己的抓取（Netlify 函数 / 本地 API / 代理）
-    return await webAPI.fetchMetadata(normalizedUrl);
+    // 未连接桌面端时，退回到 Web 自己的抓取（Netlify 函数 / 本地 API）
+    return await webAPI.fetchMetadata(url);
   },
 
   subscribe: (callback) => {
