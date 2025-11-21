@@ -15,11 +15,15 @@ document.addEventListener('DOMContentLoaded', () => {
   const inputCategory = document.getElementById('inputCategory');
   const inputNote = document.getElementById('inputNote');
   const imagePreview = document.getElementById('imagePreview');
+  const modalContent = addModal ? addModal.querySelector('.modal-content') : null;
+  const modalTitle = addModal ? addModal.querySelector('.modal-title') : null;
 
   let allItems = [];
   let currentImage = '';
   let debounceTimer;
   let sortableInstance;
+  let modalOffsetX = 0;
+  let modalOffsetY = 0;
 
   // 确保 webAPI 已加载
   if (!window.webAPI) {
@@ -35,6 +39,23 @@ document.addEventListener('DOMContentLoaded', () => {
   function getFilteredItems(items = allItems) {
     const filter = getActiveFilter();
     return filter === 'all' ? items : items.filter(item => item.platform === filter);
+  }
+
+  function resetAddModalForm() {
+    if (!inputUrl || !inputTitle || !inputNote) return;
+    inputUrl.value = '';
+    inputTitle.value = '';
+    inputNote.value = '';
+    inputTitle.placeholder = '输入标题...';
+    if (imagePreview) {
+      imagePreview.style.display = 'none';
+    }
+    currentImage = '';
+    modalOffsetX = 0;
+    modalOffsetY = 0;
+    if (modalContent) {
+      modalContent.style.transform = 'translate(0, 0)';
+    }
   }
 
   // 加载数据
@@ -172,15 +193,8 @@ document.addEventListener('DOMContentLoaded', () => {
 
   // 显示添加弹窗
   showAddModalBtn.addEventListener('click', async () => {
+    resetAddModalForm();
     addModal.classList.add('show');
-    currentImage = '';
-    imagePreview.style.display = 'none';
-    
-    // 重置表单
-    inputUrl.value = '';
-    inputTitle.value = '';
-    inputNote.value = '';
-    inputTitle.placeholder = '输入标题...';
 
     // 尝试读取剪贴板
     try {
@@ -201,14 +215,55 @@ document.addEventListener('DOMContentLoaded', () => {
   // 关闭弹窗
   cancelAddBtn.addEventListener('click', () => {
     addModal.classList.remove('show');
-    // 重置表单
-    inputUrl.value = '';
-    inputTitle.value = '';
-    inputNote.value = '';
-    imagePreview.style.display = 'none';
-    currentImage = '';
-    inputTitle.placeholder = '输入标题...';
+    resetAddModalForm();
   });
+
+  // 点击遮罩关闭弹窗（与桌面端 Esc 行为类似）
+  addModal.addEventListener('click', (e) => {
+    if (e.target === addModal) {
+      addModal.classList.remove('show');
+      resetAddModalForm();
+    }
+  });
+
+  // 弹窗拖动（模拟桌面端捕捉窗口可拖动的体验）
+  if (modalContent && modalTitle) {
+    modalTitle.style.cursor = 'move';
+
+    let isDraggingModal = false;
+    let dragStartX = 0;
+    let dragStartY = 0;
+    let startOffsetX = 0;
+    let startOffsetY = 0;
+
+    const onMouseDown = (e) => {
+      // 只允许左键拖动
+      if (e.button !== 0) return;
+      isDraggingModal = true;
+      dragStartX = e.clientX;
+      dragStartY = e.clientY;
+      startOffsetX = modalOffsetX;
+      startOffsetY = modalOffsetY;
+      document.addEventListener('mousemove', onMouseMove);
+      document.addEventListener('mouseup', onMouseUp);
+    };
+
+    const onMouseMove = (e) => {
+      if (!isDraggingModal) return;
+      modalOffsetX = startOffsetX + (e.clientX - dragStartX);
+      modalOffsetY = startOffsetY + (e.clientY - dragStartY);
+      modalContent.style.transform = `translate(${modalOffsetX}px, ${modalOffsetY}px)`;
+    };
+
+    const onMouseUp = () => {
+      if (!isDraggingModal) return;
+      isDraggingModal = false;
+      document.removeEventListener('mousemove', onMouseMove);
+      document.removeEventListener('mouseup', onMouseUp);
+    };
+
+    modalTitle.addEventListener('mousedown', onMouseDown);
+  }
 
   // 导出功能 (仅在有此按钮时绑定)
   if (exportBtn) {
@@ -349,12 +404,7 @@ document.addEventListener('DOMContentLoaded', () => {
     renderGrid(getFilteredItems(allItems));
     addModal.classList.remove('show');
 
-    // 清空表单
-    inputUrl.value = '';
-    inputTitle.value = '';
-    inputNote.value = '';
-    imagePreview.style.display = 'none';
-    currentImage = '';
+    resetAddModalForm();
   }
 
   // 确认添加
@@ -382,6 +432,7 @@ document.addEventListener('DOMContentLoaded', () => {
     // Escape 键关闭弹窗
     if (e.key === 'Escape') {
       addModal.classList.remove('show');
+      resetAddModalForm();
     }
   });
 
