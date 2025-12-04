@@ -814,32 +814,58 @@
     `;
   }
 
+  // 显示提示消息
+  function showToast(message, duration = 2000) {
+    const toast = document.createElement('div');
+    toast.style.cssText = `
+      position: fixed;
+      bottom: 80px;
+      left: 50%;
+      transform: translateX(-50%);
+      background: rgba(0, 0, 0, 0.8);
+      color: white;
+      padding: 10px 20px;
+      border-radius: 8px;
+      font-size: 14px;
+      z-index: 10000;
+      animation: fadeIn 0.2s ease;
+    `;
+    toast.textContent = message;
+    document.body.appendChild(toast);
+    setTimeout(() => {
+      toast.style.animation = 'fadeOut 0.2s ease';
+      setTimeout(() => toast.remove(), 200);
+    }, duration);
+  }
+
   // 打开内容（新窗口）或下载
   async function openContent(id) {
     const mode = flowData.currentMode;
     const content = flowData.contents[mode]?.find(c => c.id === id);
     if (!content) return;
     
-    // 如果是书籍且有 EPUB 文件，下载它
+    // 如果是书籍且有 EPUB 文件，复制文件路径
     if (mode === 'book' && content.hasEpubFile) {
       try {
-        const fileData = await getEpubFromDB(id);
-        if (fileData) {
-          const blob = new Blob([fileData], { type: 'application/epub+zip' });
-          const url = URL.createObjectURL(blob);
-          const a = document.createElement('a');
-          a.href = url;
-          a.download = content.fileName || `${content.title}.epub`;
-          document.body.appendChild(a);
-          a.click();
-          document.body.removeChild(a);
-          URL.revokeObjectURL(url);
+        const filePath = dragFileCache[id];
+        if (filePath) {
+          // 复制文件路径到剪贴板
+          await navigator.clipboard.writeText(filePath);
+          showToast('已复制文件路径');
         } else {
-          alert('EPUB 文件不存在');
+          // 如果没有缓存路径，先预加载再复制
+          await preloadFileForDrag(id, content.fileName);
+          const newPath = dragFileCache[id];
+          if (newPath) {
+            await navigator.clipboard.writeText(newPath);
+            showToast('已复制文件路径');
+          } else {
+            alert('文件路径获取失败');
+          }
         }
       } catch (e) {
-        console.error('下载失败:', e);
-        alert('下载失败');
+        console.error('复制失败:', e);
+        alert('复制失败');
       }
       return;
     }
