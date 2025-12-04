@@ -352,7 +352,7 @@
         </div>
         <div class="file-drop-text">拖拽文件到这里添加</div>
         <div class="file-drop-hint">支持 EPUB、MP3、WAV 等</div>
-        <input type="file" id="fileInput" accept=".epub,audio/*" style="display: none;">
+        <input type="file" id="fileInput" accept=".epub,audio/*" multiple style="display: none;">
       </div>
 
       <input type="text" id="url" placeholder="链接 (Cmd+V 或自动读取)" autofocus>
@@ -417,8 +417,8 @@
     });
     
     fileInput.addEventListener('change', (e) => {
-      if (e.target.files[0]) {
-        handleDroppedFile(e.target.files[0]);
+      if (e.target.files.length > 0) {
+        handleDroppedFiles(Array.from(e.target.files));
       }
     });
 
@@ -433,24 +433,182 @@
     dropZone.addEventListener('drop', (e) => {
       e.preventDefault();
       dropZone.classList.remove('drag-over');
-      if (e.dataTransfer.files[0]) {
-        handleDroppedFile(e.dataTransfer.files[0]);
+      if (e.dataTransfer.files.length > 0) {
+        handleDroppedFiles(Array.from(e.dataTransfer.files));
       }
     });
 
-    async function handleDroppedFile(file) {
-      const fileName = file.name.toLowerCase();
+    // 批量处理多个文件
+    async function handleDroppedFiles(files) {
+      // 过滤有效文件
+      const validFiles = files.filter(file => {
+        const fileName = file.name.toLowerCase();
+        return fileName.endsWith('.epub') || 
+               file.type.startsWith('audio/') || 
+               /\.(mp3|wav|m4a|ogg|flac)$/i.test(fileName);
+      });
       
-      // 检查文件类型
-      if (fileName.endsWith('.epub')) {
-        modeInput.value = 'book';
-        await processEpubFile(file);
-      } else if (file.type.startsWith('audio/') || /\.(mp3|wav|m4a|ogg|flac)$/i.test(fileName)) {
-        modeInput.value = 'audio';
-        await processAudioFile(file);
-      } else {
-        alert('不支持的文件格式，仅支持 EPUB 和音频文件');
+      if (validFiles.length === 0) {
+        alert('没有有效的文件，仅支持 EPUB 和音频文件');
+        return;
       }
+      
+      // 单个文件时使用原有逻辑
+      if (validFiles.length === 1) {
+        const file = validFiles[0];
+        const fileName = file.name.toLowerCase();
+        if (fileName.endsWith('.epub')) {
+          modeInput.value = 'book';
+          await processEpubFile(file);
+        } else {
+          modeInput.value = 'audio';
+          await processAudioFile(file);
+        }
+        return;
+      }
+      
+      // 多个文件时批量处理并直接保存
+      await batchSaveFiles(validFiles);
+    }
+    
+    // 批量保存文件
+    async function batchSaveFiles(files) {
+      const total = files.length;
+      let success = 0;
+      let failed = 0;
+      
+      loadingStatus.textContent = `正在添加 0/${total}...`;
+      dropZone.classList.add('has-file');
+      dropZone.innerHTML = `
+        <div class="file-drop-icon" style="background: #dbeafe;">
+          <svg fill="none" stroke="currentColor" viewBox="0 0 24 24" style="width: 22px; height: 22px; color: #2563eb;">
+            <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M7 16a4 4 0 01-.88-7.903A5 5 0 1115.9 6L16 6a5 5 0 011 9.9M15 13l-3-3m0 0l-3 3m3-3v12"/>
+          </svg>
+        </div>
+        <div class="file-drop-text">批量上传中...</div>
+        <div class="file-drop-hint" id="batchProgress">0/${total}</div>
+      `;
+      
+      for (let i = 0; i < files.length; i++) {
+        const file = files[i];
+        const fileName = file.name.toLowerCase();
+        
+        try {
+          if (fileName.endsWith('.epub')) {
+            await saveEpubFileDirect(file);
+          } else {
+            await saveAudioFileDirect(file);
+          }
+          success++;
+        } catch (e) {
+          console.error('保存文件失败:', file.name, e);
+          failed++;
+        }
+        
+        // 更新进度
+        const progress = document.getElementById('batchProgress');
+        if (progress) progress.textContent = `${i + 1}/${total}`;
+        loadingStatus.textContent = `正在添加 ${i + 1}/${total}...`;
+      }
+      
+      // 完成
+      loadingStatus.textContent = `✓ 已添加 ${success} 个文件` + (failed > 0 ? `，${failed} 个失败` : '');
+      
+      // 通知主窗口刷新
+      ipcRenderer.send('item-saved');
+      
+      // 延迟关闭
+      setTimeout(() => {
+        ipcRenderer.send('hide-capture-window');
+        resetForm();
+      }, 1000);
+    }
+    
+    // 直接保存 EPUB 文件（不显示预览）
+    async function saveEpubFileDirect(file) {
+      const arrayBuffer = await file.arrayBuffer();
+      const zip = await JSZip.loadAsync(arrayBuffer);
+      
+      let title = file.name.replace('.epub', '');
+      let author = '';
+      let coverImage = '';
+      
+      // 解析 metadata
+      try {
+        const containerXml = await zip.file('META-INF/container.xml')?.async('string');
+        if (containerXml) {
+          const rootfileMatch = containerXml.match(/full-path="([^"]+)"/);
+          if (rootfileMatch) {
+            const opfContent = await zip.file(rootfileMatch[1])?.async('string');
+            if (opfContent) {
+              const titleMatch = opfContent.match(/<dc:title[^>]*>([^<]+)<\/dc:title>/i);
+              const authorMatch = opfContent.match(/<dc:creator[^>]*>([^<]+)<\/dc:creator>/i);
+              if (titleMatch) title = titleMatch[1];
+              if (authorMatch) author = authorMatch[1];
+              
+              // 尝试获取封面
+              const coverMeta = opfContent.match(/name="cover"\s+content="([^"]+)"/i);
+              if (coverMeta) {
+                const coverItemMatch = opfContent.match(new RegExp(`id="${coverMeta[1]}"[^>]*href="([^"]+)"`, 'i'));
+                if (coverItemMatch) {
+                  const rootDir = rootfileMatch[1].substring(0, rootfileMatch[1].lastIndexOf('/') + 1);
+                  const coverPath = rootDir + coverItemMatch[1];
+                  const coverFile = zip.file(coverPath) || zip.file(coverItemMatch[1]);
+                  if (coverFile) {
+                    const coverData = await coverFile.async('base64');
+                    coverImage = `data:image/jpeg;base64,${coverData}`;
+                  }
+                }
+              }
+            }
+          }
+        }
+      } catch (e) {
+        console.warn('解析 EPUB 元数据失败:', e);
+      }
+      
+      const newItem = {
+        id: Date.now().toString() + Math.random().toString(36).substr(2, 9),
+        url: '',
+        title: title,
+        category: categoryInput.value,
+        note: '',
+        image: coverImage,
+        platform: 'Book',
+        createdAt: new Date().toISOString(),
+        pinned: false,
+        hasEpubFile: true,
+        author: author,
+        fileName: file.name,
+        fileSize: file.size,
+        fileData: arrayBufferToBase64(arrayBuffer)
+      };
+      
+      await ipcRenderer.invoke('save-item', newItem);
+    }
+    
+    // 直接保存音频文件（不显示预览）
+    async function saveAudioFileDirect(file) {
+      const arrayBuffer = await file.arrayBuffer();
+      const title = file.name.replace(/\.[^.]+$/, '');
+      
+      const newItem = {
+        id: Date.now().toString() + Math.random().toString(36).substr(2, 9),
+        url: '',
+        title: title,
+        category: categoryInput.value,
+        note: '',
+        image: '',
+        platform: 'Audio',
+        createdAt: new Date().toISOString(),
+        pinned: false,
+        hasAudioFile: true,
+        fileName: file.name,
+        fileSize: file.size,
+        fileData: arrayBufferToBase64(arrayBuffer)
+      };
+      
+      await ipcRenderer.invoke('save-item', newItem);
     }
 
     async function processEpubFile(file) {
@@ -532,7 +690,7 @@
         <div class="file-icon" style="background: #d1fae5;">${icon}</div>
         <div class="file-drop-text" style="color: #059669;">${name}</div>
         <div class="file-drop-hint">${sizeStr} · 点击更换文件</div>
-        <input type="file" id="fileInput" accept=".epub,audio/*" style="display: none;">
+        <input type="file" id="fileInput" accept=".epub,audio/*" multiple style="display: none;">
       `;
     }
 
@@ -692,7 +850,7 @@
         </div>
         <div class="file-drop-text">拖拽文件到这里添加</div>
         <div class="file-drop-hint">支持 EPUB、MP3、WAV 等</div>
-        <input type="file" id="fileInput" accept=".epub,audio/*" style="display: none;">
+        <input type="file" id="fileInput" accept=".epub,audio/*" multiple style="display: none;">
       `;
     }
 

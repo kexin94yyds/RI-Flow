@@ -1,4 +1,4 @@
-const { app, BrowserWindow, globalShortcut, ipcMain, shell, clipboard, screen, dialog } = require('electron');
+const { app, BrowserWindow, globalShortcut, ipcMain, shell, clipboard, screen, dialog, nativeImage } = require('electron');
 const path = require('path');
 const Store = require('electron-store');
 const fetch = require('node-fetch');
@@ -10,6 +10,10 @@ const ip = require('ip');
 const QRCode = require('qrcode');
 
 const store = new Store();
+const isMac = process.platform === 'darwin';
+const PINNED_ON_TOP_LEVEL = isMac ? 'pop-up-menu' : 'screen-saver'; // 较低层级，避免遮挡拖拽预览
+const DRAGGING_ON_TOP_LEVEL = isMac ? 'floating' : 'screen-saver';  // 拖拽时进一步降低层级
+const CAPTURE_ON_TOP_LEVEL = PINNED_ON_TOP_LEVEL;
 let mainWindow;
 let captureWindow;
 let lastShowAt = 0; // 记录最近一次显示时间，用于忽略刚显示时的 blur
@@ -200,7 +204,9 @@ function startLocalServer() {
 }
 
 let mainWindowPinned = false; // 主窗口置顶状态
+let isDragging = false; // 拖拽状态，拖拽时不隐藏窗口
 let captureWindowPinned = false; // Capture 窗口置顶状态
+let captureWindowWasOnTopDuringDrag = false; // 记录拖拽前的置顶状态，用于恢复
 
 function createMainWindow() {
   mainWindow = new BrowserWindow({
@@ -227,9 +233,9 @@ function createMainWindow() {
     return { action: 'deny' };
   });
 
-  // 失去焦点时隐藏（仅在非置顶状态）
+  // 失去焦点时隐藏（仅在非置顶状态且非拖拽状态）
   mainWindow.on('blur', () => {
-    if (!mainWindowPinned && mainWindow && !mainWindow.isDestroyed()) {
+    if (!mainWindowPinned && !isDragging && mainWindow && !mainWindow.isDestroyed()) {
       mainWindow.hide();
     }
   });
@@ -308,7 +314,7 @@ async function showCaptureOnActiveSpace() {
 
   // 使用最高层级
   try {
-    captureWindow.setAlwaysOnTop(true, 'screen-saver');
+    captureWindow.setAlwaysOnTop(true, CAPTURE_ON_TOP_LEVEL);
   } catch (_) { }
 
   captureWindow.show();
@@ -473,7 +479,7 @@ ipcMain.handle('get-always-on-top', () => {
 ipcMain.handle('toggle-always-on-top', () => {
   if (!mainWindow || mainWindow.isDestroyed()) return false;
   mainWindowPinned = !mainWindowPinned;
-  mainWindow.setAlwaysOnTop(mainWindowPinned, mainWindowPinned ? 'screen-saver' : 'normal');
+  mainWindow.setAlwaysOnTop(mainWindowPinned, mainWindowPinned ? PINNED_ON_TOP_LEVEL : 'normal');
   return mainWindowPinned;
 });
 
@@ -481,6 +487,7 @@ ipcMain.handle('toggle-always-on-top', () => {
 ipcMain.handle('toggle-capture-always-on-top', () => {
   if (!captureWindow || captureWindow.isDestroyed()) return false;
   captureWindowPinned = !captureWindowPinned;
+  captureWindow.setAlwaysOnTop(captureWindowPinned, captureWindowPinned ? CAPTURE_ON_TOP_LEVEL : 'normal');
   // Capture 窗口置顶时不会因失去焦点而隐藏
   return captureWindowPinned;
 });
@@ -564,4 +571,105 @@ ipcMain.handle('get-mobile-connect-info', async () => {
   const url = `http://${address}:${port}/web-dashboard.html`;
   const qrCode = await QRCode.toDataURL(url);
   return { url, qrCode };
+});
+
+// 文件拖拽导出
+const fs = require('fs');
+const os = require('os');
+
+function setDragSafeWindowLevels() {
+  if (mainWindow && !mainWindow.isDestroyed() && mainWindowPinned) {
+    mainWindow.setAlwaysOnTop(true, DRAGGING_ON_TOP_LEVEL);
+  }
+  if (captureWindow && !captureWindow.isDestroyed() && captureWindowWasOnTopDuringDrag) {
+    captureWindow.setAlwaysOnTop(true, DRAGGING_ON_TOP_LEVEL);
+  }
+}
+
+function restoreWindowLevelsAfterDrag() {
+  if (mainWindow && !mainWindow.isDestroyed()) {
+    mainWindow.setAlwaysOnTop(mainWindowPinned, mainWindowPinned ? PINNED_ON_TOP_LEVEL : 'normal');
+  }
+  if (captureWindow && !captureWindow.isDestroyed()) {
+    captureWindow.setAlwaysOnTop(
+      captureWindowWasOnTopDuringDrag,
+      captureWindowWasOnTopDuringDrag ? CAPTURE_ON_TOP_LEVEL : 'normal'
+    );
+  }
+  captureWindowWasOnTopDuringDrag = false;
+}
+
+// 准备临时文件用于拖拽（预先写入）
+ipcMain.handle('prepare-drag-file', async (event, { id, fileName, fileData }) => {
+  try {
+    const tempDir = path.join(os.tmpdir(), 'info-filter-drag');
+    if (!fs.existsSync(tempDir)) {
+      fs.mkdirSync(tempDir, { recursive: true });
+    }
+    
+    const tempPath = path.join(tempDir, fileName);
+    const buffer = Buffer.from(fileData, 'base64');
+    fs.writeFileSync(tempPath, buffer);
+    
+    return { success: true, path: tempPath };
+  } catch (e) {
+    console.error('准备拖拽文件失败:', e);
+    return { success: false, error: e.message };
+  }
+});
+
+// 拖拽状态管理
+ipcMain.on('drag-start', () => {
+  isDragging = true;
+  console.log('[DRAG] 开始拖拽，禁用 blur 隐藏');
+  captureWindowWasOnTopDuringDrag = !!(captureWindow && !captureWindow.isDestroyed() && captureWindow.isAlwaysOnTop());
+  // 降低置顶层级，让拖拽预览显示在窗口上方
+  setDragSafeWindowLevels();
+});
+
+ipcMain.on('drag-end', () => {
+  isDragging = false;
+  console.log('[DRAG] 拖拽结束，恢复 blur 隐藏');
+  restoreWindowLevelsAfterDrag();
+});
+
+// 执行拖拽
+ipcMain.on('ondragstart', (event, filePath) => {
+  try {
+    console.log('[startDrag] 收到拖拽请求:', filePath);
+    isDragging = true; // 设置拖拽状态
+    if (!captureWindowWasOnTopDuringDrag) {
+      captureWindowWasOnTopDuringDrag = !!(captureWindow && !captureWindow.isDestroyed() && captureWindow.isAlwaysOnTop());
+    }
+    setDragSafeWindowLevels();
+    
+    if (fs.existsSync(filePath)) {
+      // 创建一个 16x16 的透明图标
+      const iconBuffer = Buffer.from(
+        'iVBORw0KGgoAAAANSUhEUgAAABAAAAAQCAYAAAAf8/9hAAAAEklEQVQ4jWNgGAWjYBSMglEAAAPQAAH0yT' +
+        '3FAAAAAElFTkSuQmCC',
+        'base64'
+      );
+      const icon = nativeImage.createFromBuffer(iconBuffer);
+      
+      console.log('[startDrag] 开始拖拽文件');
+      event.sender.startDrag({
+        file: filePath,
+        icon: icon
+      });
+      console.log('[startDrag] 拖拽启动完成');
+    } else {
+      console.error('[startDrag] 文件不存在:', filePath);
+    }
+  } catch (e) {
+    console.error('[startDrag] 拖拽失败:', e);
+  } finally {
+    // 延迟重置拖拽状态，给拖拽操作足够时间
+    setTimeout(() => {
+      if (isDragging) {
+        isDragging = false;
+        restoreWindowLevelsAfterDrag();
+      }
+    }, 3000);
+  }
 });

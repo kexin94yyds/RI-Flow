@@ -50,6 +50,27 @@
   let currentNoteId = null;
   let currentEditId = null;
   let searchQuery = '';  // 搜索关键词
+  
+  // 拖拽文件路径缓存
+  const dragFileCache = {};
+  
+  // 预加载文件用于拖拽导出（写入临时文件并缓存路径）
+  async function preloadFileForDrag(id, fileName) {
+    if (!fileName || dragFileCache[id] || !ipcRenderer) return;
+    try {
+      const fileData = await getEpubFromDB(id);
+      if (fileData) {
+        const base64 = arrayBufferToBase64(fileData);
+        const result = await ipcRenderer.invoke('prepare-drag-file', { id, fileName, fileData: base64 });
+        if (result.success) {
+          dragFileCache[id] = result.path;
+          console.log('文件已准备好拖拽:', fileName);
+        }
+      }
+    } catch (err) {
+      console.error('预加载文件失败:', err);
+    }
+  }
 
   // 模式配置
   const modeConfig = {
@@ -307,13 +328,14 @@
     epubDropZone.addEventListener('drop', (e) => {
       e.preventDefault();
       epubDropZone.classList.remove('drag-over');
-      if (e.dataTransfer.files[0]) {
-        handleEpubFile(e.dataTransfer.files[0]);
+      if (e.dataTransfer.files.length > 0) {
+        handleEpubFiles(Array.from(e.dataTransfer.files));
       }
     });
     epubFileInput.addEventListener('change', (e) => {
-      if (e.target.files[0]) {
-        handleEpubFile(e.target.files[0]);
+      if (e.target.files.length > 0) {
+        handleEpubFiles(Array.from(e.target.files));
+        e.target.value = '';
       }
     });
     epubAddBtn.addEventListener('click', addEpubBook);
@@ -340,13 +362,14 @@
     audioDropZone.addEventListener('drop', (e) => {
       e.preventDefault();
       audioDropZone.classList.remove('drag-over');
-      if (e.dataTransfer.files[0]) {
-        handleAudioFile(e.dataTransfer.files[0]);
+      if (e.dataTransfer.files.length > 0) {
+        handleAudioFiles(Array.from(e.dataTransfer.files));
       }
     });
     audioFileInput.addEventListener('change', (e) => {
-      if (e.target.files[0]) {
-        handleAudioFile(e.target.files[0]);
+      if (e.target.files.length > 0) {
+        handleAudioFiles(Array.from(e.target.files));
+        e.target.value = '';
       }
     });
     audioAddBtn.addEventListener('click', addAudioFile);
@@ -524,7 +547,43 @@
     // 绑定事件
     mediaGrid.querySelectorAll('.media-card').forEach(card => {
       const id = card.dataset.id;
-      card.querySelector('.media-card-thumb').addEventListener('click', () => openContent(id));
+      const thumb = card.querySelector('.media-card-thumb');
+      thumb.addEventListener('click', () => openContent(id));
+      
+      // 文件拖拽导出
+      if (thumb.dataset.hasFile === 'true' && ipcRenderer) {
+        console.log('[DRAG] 绑定拖拽事件:', id, thumb.dataset.fileName);
+        // 预加载文件到临时目录
+        preloadFileForDrag(id, thumb.dataset.fileName);
+        
+        thumb.addEventListener('dragstart', (e) => {
+          console.log('[DRAG] dragstart 触发:', id);
+          const filePath = dragFileCache[id];
+          const fileName = thumb.dataset.fileName;
+          if (filePath && fileName) {
+            console.log('[DRAG] 设置文件拖拽:', filePath);
+            // 通知主进程开始拖拽（防止窗口隐藏）
+            ipcRenderer.send('drag-start');
+            // 使用 DownloadURL 格式进行文件拖拽（拖拽到桌面）
+            const mimeType = fileName.endsWith('.epub') ? 'application/epub+zip' : 'application/octet-stream';
+            const fileUrl = `file://${filePath}`;
+            e.dataTransfer.effectAllowed = 'copy';
+            e.dataTransfer.setData('DownloadURL', `${mimeType}:${fileName}:${fileUrl}`);
+            e.dataTransfer.setData('text/uri-list', fileUrl);
+            // 同时调用 Electron startDrag
+            ipcRenderer.send('ondragstart', filePath);
+          } else {
+            console.log('[DRAG] 文件未缓存');
+          }
+        });
+        
+        thumb.addEventListener('dragend', () => {
+          console.log('[DRAG] dragend 触发:', id);
+          // 通知主进程拖拽结束
+          ipcRenderer.send('drag-end');
+        });
+      }
+      
       card.querySelector('.media-card-btn.pin')?.addEventListener('click', (e) => {
         e.stopPropagation();
         togglePin(id);
@@ -632,7 +691,7 @@
 
     return `
       <div class="media-card" data-id="${content.id}">
-        <div class="media-card-thumb ${hasThumb ? 'has-thumb' : ''}">
+        <div class="media-card-thumb ${hasThumb ? 'has-thumb' : ''}" draggable="${content.hasEpubFile || content.hasAudioFile ? 'true' : 'false'}" data-has-file="${content.hasEpubFile || content.hasAudioFile ? 'true' : 'false'}" data-file-name="${content.fileName || ''}">
           ${thumbHtml}
           <div class="media-card-play ${hasThumb ? 'overlay' : ''}">
             ${iconSvg}
@@ -1180,6 +1239,153 @@
     });
   }
 
+  // 批量处理 EPUB 文件
+  async function handleEpubFiles(files) {
+    // 过滤 EPUB 文件
+    const epubFiles = files.filter(f => f.name.toLowerCase().endsWith('.epub'));
+    
+    if (epubFiles.length === 0) {
+      alert('请选择 EPUB 文件');
+      return;
+    }
+    
+    // 单个文件时使用原有逻辑（显示预览）
+    if (epubFiles.length === 1) {
+      handleEpubFile(epubFiles[0]);
+      return;
+    }
+    
+    // 多个文件时批量添加
+    const epubDropZone = document.getElementById('epubDropZone');
+    const epubPreview = document.getElementById('epubPreview');
+    const total = epubFiles.length;
+    let success = 0;
+    let failed = 0;
+    
+    // 显示进度
+    epubDropZone.innerHTML = `
+      <div style="text-align: center;">
+        <svg fill="none" stroke="currentColor" viewBox="0 0 24 24" style="width: 32px; height: 32px; margin-bottom: 8px; opacity: 0.5; animation: spin 1s linear infinite;">
+          <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M4 4v5h.582m15.356 2A8.001 8.001 0 004.582 9m0 0H9m11 11v-5h-.581m0 0a8.003 8.003 0 01-15.357-2m15.357 2H15"/>
+        </svg>
+        <div>批量添加中...</div>
+        <div style="font-size: 12px; margin-top: 4px;" id="epubBatchProgress">0/${total}</div>
+      </div>
+    `;
+    epubPreview.style.display = 'none';
+    
+    for (let i = 0; i < epubFiles.length; i++) {
+      const file = epubFiles[i];
+      try {
+        await addEpubBookDirect(file);
+        success++;
+      } catch (e) {
+        console.error('添加 EPUB 失败:', file.name, e);
+        failed++;
+      }
+      
+      // 更新进度
+      const progress = document.getElementById('epubBatchProgress');
+      if (progress) progress.textContent = `${i + 1}/${total}`;
+    }
+    
+    // 完成
+    epubDropZone.innerHTML = `
+      <svg fill="none" stroke="currentColor" viewBox="0 0 24 24" style="width: 32px; height: 32px; margin-bottom: 8px; color: #10b981;">
+        <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M5 13l4 4L19 7"/>
+      </svg>
+      <div style="color: #10b981;">已添加 ${success} 本书籍${failed > 0 ? `，${failed} 个失败` : ''}</div>
+      <div style="font-size: 12px; margin-top: 4px;">点击继续添加</div>
+    `;
+    
+    // 保存并刷新
+    saveData();
+    render();
+    
+    // 延迟关闭弹窗
+    setTimeout(() => {
+      closeContentModal();
+      // 恢复拖拽区域
+      epubDropZone.innerHTML = `
+        <svg fill="none" stroke="currentColor" viewBox="0 0 24 24" style="width: 32px; height: 32px; margin-bottom: 8px; opacity: 0.5;">
+          <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M12 6.253v13m0-13C10.832 5.477 9.246 5 7.5 5S4.168 5.477 3 6.253v13C4.168 18.477 5.754 18 7.5 18s3.332.477 4.5 1.253m0-13C13.168 5.477 14.754 5 16.5 5c1.747 0 3.332.477 4.5 1.253v13C19.832 18.477 18.247 18 16.5 18c-1.746 0-3.332.477-4.5 1.253"/>
+        </svg>
+        <div>拖拽 EPUB 文件到这里</div>
+        <div style="font-size: 12px; margin-top: 4px;">或点击选择文件</div>
+        <input type="file" id="epubFileInput" accept=".epub" multiple style="display: none;">
+      `;
+    }, 1500);
+  }
+  
+  // 直接添加 EPUB（批量时使用）
+  async function addEpubBookDirect(file) {
+    const zip = await JSZip.loadAsync(file);
+    
+    // 读取 container.xml 获取 rootfile 路径
+    const containerXml = await zip.file('META-INF/container.xml').async('text');
+    const parser = new DOMParser();
+    const containerDoc = parser.parseFromString(containerXml, 'text/xml');
+    const rootfilePath = containerDoc.querySelector('rootfile').getAttribute('full-path');
+    const rootDir = rootfilePath.substring(0, rootfilePath.lastIndexOf('/') + 1);
+    
+    // 读取 content.opf 获取元数据
+    const opfXml = await zip.file(rootfilePath).async('text');
+    const opfDoc = parser.parseFromString(opfXml, 'text/xml');
+    
+    // 获取标题
+    const titleEl = opfDoc.querySelector('metadata title, metadata dc\\:title');
+    const title = titleEl ? titleEl.textContent : file.name.replace('.epub', '');
+    
+    // 获取作者
+    const creatorEl = opfDoc.querySelector('metadata creator, metadata dc\\:creator');
+    const author = creatorEl ? creatorEl.textContent : '未知作者';
+    
+    // 获取封面（简化版）
+    let coverImage = '';
+    const coverMeta = opfDoc.querySelector('meta[name="cover"]');
+    if (coverMeta) {
+      const coverId = coverMeta.getAttribute('content');
+      const coverItem = opfDoc.querySelector(`item[id="${coverId}"]`);
+      if (coverItem) {
+        const coverHref = coverItem.getAttribute('href');
+        const coverPath = rootDir + coverHref;
+        const coverFile = zip.file(coverPath) || zip.file(coverHref);
+        if (coverFile) {
+          const coverData = await coverFile.async('base64');
+          const mediaType = coverItem.getAttribute('media-type') || 'image/jpeg';
+          coverImage = `data:${mediaType};base64,${coverData}`;
+        }
+      }
+    }
+    
+    // 读取原始文件数据
+    const fileData = await file.arrayBuffer();
+    
+    const mode = 'book';
+    if (!flowData.contents[mode]) {
+      flowData.contents[mode] = [];
+    }
+    
+    const contentId = generateId();
+    
+    const content = {
+      id: contentId,
+      title,
+      author,
+      image: coverImage,
+      fileName: file.name,
+      hasEpubFile: true,
+      url: '',
+      note: '',
+      createdAt: Date.now()
+    };
+    
+    // 保存文件到 IndexedDB
+    await saveEpubToDB(contentId, fileData);
+    
+    flowData.contents[mode].push(content);
+  }
+
   // 处理 EPUB 文件
   async function handleEpubFile(file) {
     if (!file.name.endsWith('.epub')) {
@@ -1415,6 +1621,115 @@
 
   // 音频临时数据
   let pendingAudioData = null;
+
+  // 批量处理音频文件
+  async function handleAudioFiles(files) {
+    // 过滤音频文件
+    const audioFiles = files.filter(f => 
+      f.type.startsWith('audio/') || /\.(mp3|wav|m4a|ogg|flac)$/i.test(f.name)
+    );
+    
+    if (audioFiles.length === 0) {
+      alert('请选择音频文件');
+      return;
+    }
+    
+    // 单个文件时使用原有逻辑（显示预览）
+    if (audioFiles.length === 1) {
+      handleAudioFile(audioFiles[0]);
+      return;
+    }
+    
+    // 多个文件时批量添加
+    const audioDropZone = document.getElementById('audioDropZone');
+    const audioPreview = document.getElementById('audioPreview');
+    const total = audioFiles.length;
+    let success = 0;
+    let failed = 0;
+    
+    // 显示进度
+    audioDropZone.innerHTML = `
+      <div style="text-align: center;">
+        <svg fill="none" stroke="currentColor" viewBox="0 0 24 24" style="width: 32px; height: 32px; margin-bottom: 8px; opacity: 0.5; animation: spin 1s linear infinite;">
+          <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M4 4v5h.582m15.356 2A8.001 8.001 0 004.582 9m0 0H9m11 11v-5h-.581m0 0a8.003 8.003 0 01-15.357-2m15.357 2H15"/>
+        </svg>
+        <div>批量添加中...</div>
+        <div style="font-size: 12px; margin-top: 4px;" id="audioBatchProgress">0/${total}</div>
+      </div>
+    `;
+    audioPreview.style.display = 'none';
+    
+    for (let i = 0; i < audioFiles.length; i++) {
+      const file = audioFiles[i];
+      try {
+        await addAudioFileDirect(file);
+        success++;
+      } catch (e) {
+        console.error('添加音频失败:', file.name, e);
+        failed++;
+      }
+      
+      // 更新进度
+      const progress = document.getElementById('audioBatchProgress');
+      if (progress) progress.textContent = `${i + 1}/${total}`;
+    }
+    
+    // 完成
+    audioDropZone.innerHTML = `
+      <svg fill="none" stroke="currentColor" viewBox="0 0 24 24" style="width: 32px; height: 32px; margin-bottom: 8px; color: #10b981;">
+        <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M5 13l4 4L19 7"/>
+      </svg>
+      <div style="color: #10b981;">已添加 ${success} 个音频${failed > 0 ? `，${failed} 个失败` : ''}</div>
+      <div style="font-size: 12px; margin-top: 4px;">点击继续添加</div>
+    `;
+    
+    // 保存并刷新
+    saveData();
+    render();
+    
+    // 延迟关闭弹窗
+    setTimeout(() => {
+      closeContentModal();
+      // 恢复拖拽区域
+      audioDropZone.innerHTML = `
+        <svg fill="none" stroke="currentColor" viewBox="0 0 24 24" style="width: 32px; height: 32px; margin-bottom: 8px; opacity: 0.5;">
+          <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M9 19V6l12-3v13M9 19c0 1.105-1.343 2-3 2s-3-.895-3-2 1.343-2 3-2 3 .895 3 2zm12-3c0 1.105-1.343 2-3 2s-3-.895-3-2 1.343-2 3-2 3 .895 3 2zM9 10l12-3"/>
+        </svg>
+        <div>拖拽音频文件到这里</div>
+        <div style="font-size: 12px; margin-top: 4px;">支持 MP3、WAV、M4A 等格式</div>
+        <input type="file" id="audioFileInput" accept="audio/*" multiple style="display: none;">
+      `;
+    }, 1500);
+  }
+  
+  // 直接添加音频（批量时使用）
+  async function addAudioFileDirect(file) {
+    const fileData = await file.arrayBuffer();
+    
+    const mode = 'audio';
+    if (!flowData.contents[mode]) {
+      flowData.contents[mode] = [];
+    }
+    
+    const contentId = generateId();
+    
+    const content = {
+      id: contentId,
+      title: file.name.replace(/\.[^/.]+$/, ''),
+      fileName: file.name,
+      fileSize: file.size,
+      fileType: file.type,
+      hasAudioFile: true,
+      url: '',
+      note: '',
+      createdAt: Date.now()
+    };
+    
+    // 保存文件到 IndexedDB
+    await saveEpubToDB(contentId, fileData);
+    
+    flowData.contents[mode].push(content);
+  }
 
   // 处理音频文件
   async function handleAudioFile(file) {

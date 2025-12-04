@@ -12,6 +12,11 @@
       box-sizing: border-box;
     }
 
+    @keyframes spin {
+      from { transform: rotate(0deg); }
+      to { transform: rotate(360deg); }
+    }
+
     body {
       font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, Helvetica, Arial, sans-serif;
       background-color: #f3f4f6;
@@ -1008,7 +1013,7 @@
             </svg>
             <div>拖拽 EPUB 文件到这里</div>
             <div style="font-size: 12px; margin-top: 4px;">或点击选择文件</div>
-            <input type="file" id="epubFileInput" accept=".epub" style="display: none;">
+            <input type="file" id="epubFileInput" accept=".epub" multiple style="display: none;">
           </div>
           <div id="epubPreview" style="display: none; padding: 16px; background: #f9fafb; border-radius: 8px;">
             <div style="display: flex; gap: 16px; align-items: flex-start;">
@@ -1048,7 +1053,7 @@
             </svg>
             <div>拖拽音频文件到这里</div>
             <div style="font-size: 12px; margin-top: 4px;">支持 MP3、WAV、M4A 等格式</div>
-            <input type="file" id="audioFileInput" accept="audio/*" style="display: none;">
+            <input type="file" id="audioFileInput" accept="audio/*" multiple style="display: none;">
           </div>
           <div id="audioPreview" style="display: none; padding: 16px; background: #f9fafb; border-radius: 8px;">
             <div style="display: flex; gap: 16px; align-items: center;">
